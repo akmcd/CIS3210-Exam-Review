@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Read — CIS*3210 Exam Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css?v=20261027b">
+</head>
+<body data-page="read">
+  <header id="site-header"></header>
+  <main>
+    <div class="page-head">
+      <h1>Read</h1>
+      <p>Everything since the midterm, from the slides, with the textbook filling the gaps. Each section names its sources. The blue-edged boxes are demos you can step through.</p>
+      <div class="btn-row notes-bar">
+        <button class="btn quiet" type="button" id="collapse-all">Collapse all subsections</button>
+        <button class="btn quiet" type="button" id="expand-all">Expand all</button>
+        <span class="muted">Click any subsection title to fold it.</span>
+      </div>
+    </div>
+
+    <div class="reading">
+      <nav class="toc" aria-label="Sections">
+        <ol>
+          <li><a href="#rdt3">1. rdt3.0 recap</a></li>
+          <li><a href="#pipeline">2. Pipelining</a></li>
+          <li><a href="#gbn">3. Go-Back-N</a></li>
+          <li><a href="#sr">4. Selective Repeat</a></li>
+          <li><a href="#tcpconn">5. TCP connections</a></li>
+          <li><a href="#tcpseq">6. Seq and ACK numbers</a></li>
+          <li><a href="#tcprtt">7. RTT and timeout</a></li>
+          <li><a href="#tcprdt">8. TCP retransmission</a></li>
+          <li><a href="#flow">9. Flow control</a></li>
+          <li><a href="#cheat">Cheat sheet</a></li>
+        </ol>
+      </nav>
+
+      <article class="article">
+
+<!-- ================= 1 ================= -->
+<section id="rdt3">
+<h2>1. rdt3.0 recap: lossy channels</h2>
+<p class="source">Reliable Data Transfer slides (rdt3.0) · Kurose &amp; Ross 3.4.1</p>
+<p class="lead">rdt3.0 is where the post-midterm material starts: rdt2.2 plus a timer, so the sender can recover from loss. Still one packet at a time.</p>
+<ul class="notes">
+<li>The new problem:
+  <ul>
+  <li>The channel can now <strong>lose</strong> packets as well as corrupt them.</li>
+  <li>Kept from rdt2.2: checksums, sequence numbers (0/1), ACKs that carry a number, retransmission.</li>
+  <li>Added: a <strong>countdown timer</strong> and retransmission on timeout.</li>
+  </ul></li>
+<li>Timer rules:
+  <ul>
+  <li><strong>Start</strong> the timer every time a packet is sent, new or retransmitted.</li>
+  <li><strong>Stop</strong> it when the correct, uncorrupted ACK arrives.</li>
+  <li><strong>Timeout</strong>: resend the packet and start the timer again.</li>
+  <li>The timeout is chosen so loss is <em>likely</em>, not guaranteed.</li>
+  </ul></li>
+<li>Why "always retransmit" works:
+  <ul>
+  <li>No ACK could mean the data was lost, the ACK was lost, or either was just slow.</li>
+  <li>The sender can't tell these apart, and doesn't need to: it retransmits in every case.</li>
+  <li>A delayed packet that looks lost causes a duplicate. Sequence numbers let the receiver spot it.</li>
+  </ul></li>
+<li>Sender FSM (four states):
+  <ul>
+  <li><strong>Wait for call 0 from above</strong> → <code>rdt_send(data)</code>: send pkt0, start timer.</li>
+  <li><strong>Wait for ACK0</strong> → intact ACK0: stop timer, go to Wait for call 1.</li>
+  <li>In Wait for ACK0: a corrupted ACK or an ACK1 → <strong>Λ</strong> (no action); the timer handles recovery.</li>
+  <li>In Wait for ACK0: timeout → resend pkt0, start timer.</li>
+  <li><strong>Wait for call 1 from above</strong> and <strong>Wait for ACK1</strong> mirror these with 1 and 0 swapped.</li>
+  <li>In either "wait for call" state, any arriving packet → <strong>Λ</strong>. Nothing is outstanding, so a stray or duplicate ACK changes nothing (in-class Q1).</li>
+  </ul></li>
+<li>Receiver:
+  <ul>
+  <li>Same FSM as rdt2.2: deliver new data and ACK it with its number; re-ACK duplicates without delivering them.</li>
+  <li>With sequence numbers alternating 0, 1, 0, 1, rdt3.0 is the <strong>alternating-bit protocol</strong>.</li>
+  </ul></li>
+<li>The four operation cases:
+  <ul>
+  <li>No loss: 0, 1, 0, … each ACKed once.</li>
+  <li>Packet lost: the timer expires, the same packet is resent.</li>
+  <li>ACK lost: the timer expires, the receiver sees a duplicate, discards it and re-ACKs.</li>
+  <li>Premature timeout (delayed ACK): a duplicate is sent and discarded; the sender ignores the extra ACK. Correct, just wasteful.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="rdt3"></div>
+</section>
+
+<!-- ================= 2 ================= -->
+<section id="pipeline">
+<h2>2. Stop-and-wait performance and pipelining</h2>
+<p class="source">Reliable Data Transfer slides · Kurose &amp; Ross 3.4.2</p>
+<p class="lead">rdt3.0 works but wastes the link. Pipelining keeps several packets in flight to fill the idle time.</p>
+<ul class="notes">
+<li>Terms:
+  <ul>
+  <li><strong>L</strong>: packet length in bits. <strong>R</strong>: link rate in bits per second.</li>
+  <li><strong>L/R</strong>: transmission time, how long it takes to push one packet onto the link.</li>
+  <li><strong>RTT</strong>: round-trip time.</li>
+  <li><strong>Utilization U</strong>: the fraction of time the sender is actually transmitting.</li>
+  </ul></li>
+<li>Stop-and-wait:
+  <ul>
+  <li>Send one packet, then wait for its ACK. The ACK arrives at t = RTT + L/R.</li>
+  <li class="formula">U_sender = (L/R) / (RTT + L/R)</li>
+  <li>Example: L = 8,000 bits, R = 1 Gbps → L/R = 0.008 ms; RTT = 30 ms.</li>
+  <li>U = 0.008 / 30.008 ≈ <strong>0.00027</strong>. Throughput ≈ 8,000 bits / 30.008 ms ≈ 267 kbps on a 1 Gbps link.</li>
+  <li>The protocol itself is the bottleneck. Processing and queuing delays make it worse.</li>
+  </ul></li>
+<li>Pipelining:
+  <ul>
+  <li>The sender sends <strong>several packets</strong> before waiting for ACKs; packets in transit form a pipeline.</li>
+  <li class="formula">U_sender = N·(L/R) / (RTT + L/R), capped at 1</li>
+  <li>3 packets → 3 × 0.008 / 30.008 ≈ 0.0008, three times stop-and-wait.</li>
+  <li>To keep the sender always busy: N ≥ (RTT + L/R) / (L/R).</li>
+  </ul></li>
+<li>What pipelining does not change (in-class Q3):
+  <ul>
+  <li>Each packet still takes L/R to transmit.</li>
+  <li>Each packet still has the same propagation delay.</li>
+  <li>Once the sender transmits continuously, a bigger window adds nothing.</li>
+  </ul></li>
+<li>Consequences of pipelining:
+  <ul>
+  <li>A larger <strong>sequence-number range</strong>: every unACKed packet needs a unique number.</li>
+  <li><strong>Sender buffering</strong> of unACKed packets, for possible retransmission.</li>
+  <li>Sometimes <strong>receiver buffering</strong> of out-of-order packets that arrived intact.</li>
+  <li>An error-recovery strategy: <strong>Go-Back-N</strong> or <strong>Selective Repeat</strong>.</li>
+  </ul></li>
+<li>Why 1 bit isn't enough (in-class Q4):
+  <ul>
+  <li>Send three messages labelled 0, 1, 0: two outstanding messages share label 0.</li>
+  <li>An ACK0 can't say which one it confirms. No corruption is needed for the ambiguity.</li>
+  <li><strong>k-bit</strong> sequence numbers give the range 0 to 2ᵏ − 1, with modulo-2ᵏ arithmetic (a ring).</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="util"></div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section id="gbn">
+<h2>3. Go-Back-N</h2>
+<p class="source">Reliable Data Transfer slides · Kurose &amp; Ross 3.4.3</p>
+<p class="lead">A sliding window of up to N unACKed packets, cumulative ACKs, one timer, and a receiver that throws away anything out of order.</p>
+<ul class="notes">
+<li>Sender window:
+  <ul>
+  <li>At most <strong>N</strong> unACKed packets in the pipeline (the window size). A <strong>sliding-window</strong> protocol.</li>
+  <li><strong>send_base</strong>: the oldest unACKed sequence number. <strong>nextseqnum</strong>: the next number to use.</li>
+  <li>[0, send_base − 1]: already ACKed.</li>
+  <li>[send_base, nextseqnum − 1]: sent, not yet ACKed (in flight).</li>
+  <li>[nextseqnum, send_base + N − 1]: usable, not yet sent.</li>
+  <li>Beyond send_base + N − 1: not usable yet.</li>
+  </ul></li>
+<li>Sender actions:
+  <ul>
+  <li>Data from above: send it if the window has room; otherwise refuse or buffer it.</li>
+  <li><strong>Cumulative ACK(n)</strong>: every packet ≤ n arrived. send_base becomes n + 1.</li>
+  <li><strong>One timer</strong>, for the oldest unACKed packet. Restart it when the base moves and packets remain; stop it when nothing is outstanding.</li>
+  <li><strong>timeout(n)</strong>: resend packet n and <em>every</em> later packet in the window.</li>
+  <li>Duplicate ACKs (for data already confirmed) are ignored.</li>
+  </ul></li>
+<li>Receiver:
+  <ul>
+  <li>Always ACKs the <strong>highest in-order</strong> sequence number received, so duplicate ACKs are normal.</li>
+  <li>Tracks only <strong>rcv_base</strong>, the next number it expects.</li>
+  <li>Out-of-order packet: discard it (as presented; buffering is a design choice) and re-ACK the last in-order packet.</li>
+  <li>Why discard: the sender will resend it anyway, and the receiver stays simple.</li>
+  </ul></li>
+<li>Cumulative ACKs cover lost ACKs (in-class Q5):
+  <ul>
+  <li>Sent 0–3; ACK0, ACK1, ACK2 lost; ACK3 arrives before the timeout.</li>
+  <li>ACK3 proves 0–3 all arrived: send_base = 4, stop the timer, resend nothing.</li>
+  </ul></li>
+<li>Limits:
+  <ul>
+  <li>One error forces resending many packets that already arrived. Big windows and high error rates clog the pipe.</li>
+  <li>Window limit with k-bit numbers (textbook): <strong>N ≤ 2ᵏ − 1</strong>.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="gbnsr"></div>
+</section>
+
+<!-- ================= 4 ================= -->
+<section id="sr">
+<h2>4. Selective Repeat</h2>
+<p class="source">Reliable Data Transfer slides · Kurose &amp; Ross 3.4.4</p>
+<p class="lead">Resend only what was lost: individual ACKs, a timer per packet, and a receiver that buffers. The price is a stricter limit on the window.</p>
+<ul class="notes">
+<li>The idea:
+  <ul>
+  <li>Retransmit only the lost or corrupted packets.</li>
+  <li>Each correctly received packet is <strong>individually</strong> acknowledged.</li>
+  <li>Window size N, but some packets inside the sender's window may already be ACKed.</li>
+  <li>The receiver buffers out-of-order packets and delivers them in order once the gap fills.</li>
+  </ul></li>
+<li>Sender actions:
+  <ul>
+  <li>Data from above: send it if its sequence number is in the window; otherwise buffer or refuse it.</li>
+  <li>Timeout: each packet has its own <strong>logical timer</strong>; only that packet is resent. One hardware timer can simulate many logical ones.</li>
+  <li>ACK received: mark that packet ACKed. If it was send_base, slide the window to the next unACKed packet and send any newly allowed packets.</li>
+  </ul></li>
+<li>Receiver actions:
+  <ul>
+  <li>Packet in <strong>[rcv_base, rcv_base + N − 1]</strong>: send a selective ACK; buffer it if new; if it equals rcv_base, deliver it plus the consecutive buffered packets and slide the window.</li>
+  <li>Packet in <strong>[rcv_base − N, rcv_base − 1]</strong> (already received): <strong>re-ACK</strong> it. Otherwise a lost ACK would leave the sender's window stuck.</li>
+  <li>Anything else: ignore it.</li>
+  <li>The sender's and receiver's windows don't always line up.</li>
+  </ul></li>
+<li>The SR dilemma:
+  <ul>
+  <li>Sequence numbers 0–3, window 3. Packets 0, 1, 2 arrive and are delivered; the receiver's window becomes 3, 0, 1.</li>
+  <li>Case (a): the ACKs arrive, and the sender sends new packets 3, 0. The new pkt0 is accepted. Fine.</li>
+  <li>Case (b): every ACK is lost, so the sender resends old pkt0. The receiver accepts it as new. Wrong!</li>
+  <li>The receiver can't see the sender's side; both cases look identical to it.</li>
+  <li><strong>Rule: window ≤ half the sequence-number space</strong> (N ≤ 2ᵏ⁻¹). 3 bits → 8 numbers → N ≤ 4.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="srwin"></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Protocol</th><th>Bit errors</th><th>Packet loss</th><th>Corrupted ACK/NAK</th><th>Out-of-order</th><th>Type</th></tr></thead>
+<tbody>
+<tr><td>rdt3.0</td><td>✓</td><td>✓ timer</td><td>✓</td><td>✕</td><td>Stop-and-wait</td></tr>
+<tr><td>Go-Back-N</td><td>✓</td><td>✓</td><td>✓ duplicate ACKs</td><td>✕ discards</td><td>Pipelined</td></tr>
+<tr><td>Selective Repeat</td><td>✓</td><td>✓</td><td>✓</td><td>✓ buffers</td><td>Pipelined</td></tr>
+</tbody></table></div>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th>Go-Back-N</th><th>Selective Repeat</th></tr></thead>
+<tbody>
+<tr><td>ACKs</td><td>Cumulative</td><td>Individual</td></tr>
+<tr><td>Timers</td><td>One, for the oldest unACKed</td><td>One logical timer per packet</td></tr>
+<tr><td>On timeout</td><td>Resend that packet and all later unACKed</td><td>Resend only that packet</td></tr>
+<tr><td>Receiver state</td><td>rcv_base only</td><td>A window and a buffer</td></tr>
+<tr><td>Window limit (k bits)</td><td>N ≤ 2ᵏ − 1</td><td>N ≤ 2ᵏ⁻¹</td></tr>
+</tbody></table></div>
+</section>
+
+<!-- ================= 5 ================= -->
+<section id="tcpconn">
+<h2>5. TCP connections and the segment</h2>
+<p class="source">TCP slides · Kurose &amp; Ross 3.5.1–3.5.2</p>
+<p class="lead">TCP is a connection between two hosts and nothing in between. Its header carries what reliability, flow control and connection management need.</p>
+<ul class="notes">
+<li>What a TCP connection is:
+  <ul>
+  <li><strong>Connection-oriented</strong>: a handshake comes before data, and both sides set up state variables.</li>
+  <li><strong>Logical, not physical</strong>: the relationship exists only at the two end hosts.</li>
+  <li>Routers forward IP datagrams without TCP state (some middleboxes, such as firewalls and NATs, may inspect or track it).</li>
+  <li><strong>Full-duplex</strong>: data flows both ways at once.</li>
+  <li><strong>Point-to-point</strong>: one sender, one receiver. No multicast.</li>
+  <li>A connection = buffers, state variables and socket endpoints at both hosts.</li>
+  </ul></li>
+<li>Setting up:
+  <ul>
+  <li>The host that initiates is the <strong>client</strong>, e.g. <code>clientSocket.connect((serverName, serverPort))</code>.</li>
+  <li>Three-way handshake: (1) the client sends a special segment; (2) the server replies with another; (3) the client replies again, possibly with data.</li>
+  <li>Textbook names: SYN, SYNACK, ACK. FIN closes, RST resets.</li>
+  </ul></li>
+<li>Moving data:
+  <ul>
+  <li>The app writes into the socket → TCP's <strong>send buffer</strong>.</li>
+  <li>TCP cuts segments of up to <strong>MSS</strong> (Maximum Segment Size): the most application data per segment, header not included.</li>
+  <li>MSS is based on the link-layer <strong>MTU</strong> (Ethernet: 1,500 bytes) → typically 1,500 − 20 (IP) − 20 (TCP) = 1,460.</li>
+  <li>Segments go into IP datagrams. At the far end, data lands in the <strong>receive buffer</strong> and the app reads from it.</li>
+  <li>Each side has its own send and receive buffers.</li>
+  </ul></li>
+<li>Recovery lives at the ends:
+  <ul>
+  <li>Discussion question: a router drops a datagram carrying TCP data, and has no copy of the connection's state.</li>
+  <li>The sender still holds the unACKed data and retransmits after a timeout or duplicate ACKs.</li>
+  <li>The receiver's sequence/ACK state shows what is missing. The router never needs to rebuild the stream.</li>
+  </ul></li>
+<li>Segment structure (32 bits wide):
+  <ul>
+  <li><strong>Source port, dest port</strong>: 16 bits each.</li>
+  <li><strong>Sequence number</strong> (32 bits): counts <em>bytes</em> of data, not segments.</li>
+  <li><strong>Acknowledgment number</strong> (32 bits): the next byte expected.</li>
+  <li><strong>Header length</strong> (4 bits): in 32-bit words; 5 words = 20 bytes with no options.</li>
+  <li>Flags: <strong>C, E</strong> congestion notification · <strong>A</strong> the ACK field is valid · <strong>RST, SYN, FIN</strong> connection management · U, P urgent and push.</li>
+  <li><strong>Receive window</strong> (16 bits): flow control, the bytes the receiver will accept.</li>
+  <li><strong>Checksum</strong> (16 bits), urgent data pointer, then variable-length <strong>options</strong>.</li>
+  <li>Then the application data (variable length).</li>
+  </ul></li>
+</ul>
+</section>
+
+<!-- ================= 6 ================= -->
+<section id="tcpseq">
+<h2>6. Sequence numbers and ACK numbers</h2>
+<p class="source">TCP slides · Kurose &amp; Ross 3.5.2</p>
+<p class="lead">TCP numbers bytes. A segment's sequence number is its first byte; an ACK names the next byte the receiver wants.</p>
+<ul class="notes">
+<li>Sequence numbers:
+  <ul>
+  <li>TCP treats data as an <strong>unstructured but ordered stream of bytes</strong>.</li>
+  <li>A segment's sequence number = the byte-stream number of its <strong>first byte</strong>.</li>
+  <li>MSS = 1,000: segment 1 is bytes 0–999 (Seq 0), segment 2 is 1,000–1,999 (Seq 1,000), and so on.</li>
+  <li>The initial sequence number is <strong>random</strong>, so old segments aren't confused with a new connection.</li>
+  </ul></li>
+<li>ACK numbers:
+  <ul>
+  <li>ACK = the <strong>next byte expected</strong> from the other side.</li>
+  <li><strong>Cumulative</strong>: acknowledges every byte up to the first missing one.</li>
+  <li>Bytes 0–535 received → ACK = 536. Bytes 1,000–1,099 received → ACK = 1,100.</li>
+  <li>Compare GBN: ACK(n) there means "I have n"; in TCP it means "send me n next".</li>
+  </ul></li>
+<li>Out-of-order segments:
+  <ul>
+  <li>The TCP spec doesn't say what to do; it's up to the implementer.</li>
+  <li>Options: discard them, or buffer them until the gap fills (more efficient, used in practice).</li>
+  </ul></li>
+<li>Full-duplex and piggybacking:
+  <ul>
+  <li>Each direction is its own byte stream with its own sequence numbers.</li>
+  <li>A segment can carry data and ACK the other side's data at the same time.</li>
+  <li>Telnet example: A → B Seq=42, ACK=79, 'C'. B → A Seq=79, ACK=43, 'C' (ACKs and echoes it). A → B Seq=43, ACK=80.</li>
+  <li>Each ACK is one more than the sequence number received, because each segment carried one byte.</li>
+  </ul></li>
+</ul>
+</section>
+
+<!-- ================= 7 ================= -->
+<section id="tcprtt">
+<h2>7. RTT estimation and timeout</h2>
+<p class="source">TCP slides · Kurose &amp; Ross 3.5.3 (the EWMA formulas are from the textbook)</p>
+<p class="lead">TCP needs a timeout a bit longer than the RTT, but the RTT keeps changing. So it averages samples and adds a margin that grows with variation.</p>
+<ul class="notes">
+<li>Choosing the timeout:
+  <ul>
+  <li>It must be longer than the RTT, but the RTT varies.</li>
+  <li>Too short → premature timeouts and unnecessary retransmissions.</li>
+  <li>Too long → slow reaction to real segment loss.</li>
+  </ul></li>
+<li>Measuring:
+  <ul>
+  <li><strong>SampleRTT</strong>: time from sending a segment to receiving its ACK.</li>
+  <li>TCP measures one SampleRTT at a time, not one per segment.</li>
+  <li><strong>No samples from retransmitted segments</strong>: the ACK could belong to either copy.</li>
+  <li>Samples fluctuate with congestion and host load, so one sample isn't representative.</li>
+  </ul></li>
+<li>Smoothing (textbook):
+  <ul>
+  <li class="formula">EstimatedRTT = (1 − α)·EstimatedRTT + α·SampleRTT, α = 0.125</li>
+  <li>An <strong>exponentially weighted moving average</strong> (EWMA): a past sample's weight shrinks by (1 − α) with each newer sample, but never reaches zero.</li>
+  <li class="formula">DevRTT = (1 − β)·DevRTT + β·|SampleRTT − EstimatedRTT|, β = 0.25</li>
+  <li>DevRTT estimates how much SampleRTT varies from the average.</li>
+  <li class="formula">TimeoutInterval = EstimatedRTT + 4·DevRTT</li>
+  <li>In textbook problems, update EstimatedRTT first, then use the new value in DevRTT.</li>
+  <li>An initial TimeoutInterval of 1 second is recommended.</li>
+  <li>After a timeout, TCP <strong>doubles</strong> the interval instead of using the formula, until new data is ACKed.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="ewma"></div>
+</section>
+
+<!-- ================= 8 ================= -->
+<section id="tcprdt">
+<h2>8. TCP reliable data transfer</h2>
+<p class="source">TCP slides · Kurose &amp; Ross 3.5.4</p>
+<p class="lead">TCP mixes the two pipelined schemes: cumulative ACKs like GBN, but it resends one segment at a time, like SR. Duplicate ACKs let it resend before the timer fires.</p>
+<ul class="notes">
+<li>Sender events:
+  <ul>
+  <li><strong>Data from the application</strong>: put it in a segment with the next sequence number, pass it to IP, start the timer if none is running (it times the oldest unACKed segment).</li>
+  <li><strong>Timeout</strong>: retransmit the segment that caused the timeout, then restart the timer.</li>
+  <li><strong>ACK received</strong>: compare with <strong>SendBase</strong> (the oldest unACKed byte). If ACK &gt; SendBase, new data is confirmed: update SendBase and restart the timer if unACKed data remains.</li>
+  </ul></li>
+<li>Receiver ACK generation:
+  <ul>
+  <li>In-order segment, everything before it already ACKed → <strong>delayed ACK</strong>: wait up to 500 ms for another segment; if none comes, send the ACK.</li>
+  <li>In-order segment, another segment's ACK pending → immediately send <strong>one cumulative ACK</strong> for both.</li>
+  <li>Out-of-order segment (a gap) → immediately send a <strong>duplicate ACK</strong> for the next expected byte.</li>
+  <li>Segment that partly or fully fills a gap → immediately ACK, if it starts at the low end of the gap.</li>
+  </ul></li>
+<li>Scenario 1, lost ACK:
+  <ul>
+  <li>A sends Seq=92 (8 bytes); B's ACK=100 is lost.</li>
+  <li>Timeout → A resends Seq=92. B already has those bytes: discard, ACK=100 again.</li>
+  </ul></li>
+<li>Scenario 2, premature timeout:
+  <ul>
+  <li>A sends Seq=92 (8 bytes) and Seq=100 (20 bytes). B sends ACK=100 and ACK=120, but both are delayed past the timeout.</li>
+  <li>Timeout → A resends <strong>only</strong> Seq=92 and restarts the timer.</li>
+  <li>If ACK=120 arrives before the new timeout, Seq=100 is never resent. B answers the duplicate with a cumulative ACK=120.</li>
+  </ul></li>
+<li>Scenario 3, cumulative ACK covers a lost ACK:
+  <ul>
+  <li>ACK=100 is lost, but ACK=120 arrives before the timeout.</li>
+  <li>ACK=120 confirms both segments, so nothing is resent.</li>
+  </ul></li>
+<li>Fast retransmit:
+  <ul>
+  <li>The sender waits for <strong>3 duplicate ACKs</strong> (4 ACKs for the same data in total).</li>
+  <li>It takes this as loss of the segment after the last in-order byte.</li>
+  <li>It retransmits <strong>immediately</strong>, before the timeout, cutting the delay.</li>
+  <li>Why three: reordering alone can cause one or two duplicates.</li>
+  </ul></li>
+<li>GBN or SR?
+  <ul>
+  <li>Cumulative ACKs: GBN-like.</li>
+  <li>Resending one segment on timeout, and receivers that buffer out-of-order data: SR-like.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="tcpRetx"></div>
+</section>
+
+<!-- ================= 9 ================= -->
+<section id="flow">
+<h2>9. TCP flow control</h2>
+<p class="source">TCP slides · Kurose &amp; Ross 3.5.5</p>
+<p class="lead">The receiver tells the sender how much free buffer it has, and the sender never has more than that in flight.</p>
+<ul class="notes">
+<li>The problem:
+  <ul>
+  <li>The network layer can deliver data faster than the application reads it from the socket.</li>
+  <li>Each host has a <strong>receive buffer</strong>. A slow reader plus a fast sender → overflow.</li>
+  </ul></li>
+<li>Flow control:
+  <ul>
+  <li>Keeps the sender from overwhelming the receiver's buffer: a <strong>speed-matching service</strong>.</li>
+  <li>Distinct from <strong>congestion control</strong>, which is about the network, not the receiver.</li>
+  </ul></li>
+<li>The receive window:
+  <ul>
+  <li><strong>rwnd</strong> = the free buffer space at the receiver.</li>
+  <li>The receiver (Host B) advertises rwnd in the <strong>receive window</strong> field of every segment it sends.</li>
+  <li><strong>LastByteRead</strong>: last byte the app read. <strong>LastByteRcvd</strong>: last byte placed in the buffer.</li>
+  <li class="formula">rwnd = RcvBuffer − (LastByteRcvd − LastByteRead)</li>
+  <li>The sender (Host A) tracks LastByteSent and LastByteAcked.</li>
+  <li class="formula">LastByteSent − LastByteAcked ≤ rwnd</li>
+  <li>That guarantees the receive buffer can't overflow.</li>
+  <li>RcvBuffer is set by socket options, typically 4,096 bytes by default; many OSes auto-adjust it.</li>
+  </ul></li>
+<li>Zero window:
+  <ul>
+  <li>If rwnd = 0 and the receiver has nothing to send, the sender could be blocked forever.</li>
+  <li>Fix: the sender keeps sending <strong>1-byte probe segments</strong>; their ACKs eventually advertise a non-zero window.</li>
+  </ul></li>
+<li>UDP for comparison:
+  <ul>
+  <li>No flow control. Segments go into a finite buffer.</li>
+  <li>If the app reads too slowly, the buffer overflows and segments are lost.</li>
+  </ul></li>
+</ul>
+<div class="demo" data-demo="rwnd"></div>
+</section>
+
+<!-- ================= Cheat sheet ================= -->
+<section id="cheat">
+<h2>Cheat sheet</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Item</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Stop-and-wait</td><td>U = (L/R) / (RTT + L/R)</td></tr>
+<tr><td>Pipelined</td><td>U = N(L/R) / (RTT + L/R), max 1 · fill the pipe: N ≥ (RTT + L/R) / (L/R)</td></tr>
+<tr><td>rdt3.0</td><td>rdt2.2 + timer · Λ on bad/wrong ACK · Λ on anything in "wait for call"</td></tr>
+<tr><td>GBN</td><td>cumulative ACK(n) = all ≤ n · one timer · resend all unACKed · receiver discards out-of-order · N ≤ 2ᵏ − 1</td></tr>
+<tr><td>SR</td><td>individual ACKs · timer per packet · resend only lost · receiver buffers and re-ACKs below rcv_base · N ≤ 2ᵏ⁻¹</td></tr>
+<tr><td>TCP seq #</td><td>first byte of the segment (bytes, not segments) · random ISN</td></tr>
+<tr><td>TCP ACK #</td><td>next byte expected · cumulative</td></tr>
+<tr><td>TCP header</td><td>20 bytes, no options · header length in 32-bit words · seq/ACK 32 bits · ports, rwnd, checksum 16 bits</td></tr>
+<tr><td>MSS</td><td>max payload per segment · 1,500 − 40 = 1,460</td></tr>
+<tr><td>RTT</td><td>Est = 0.875·Est + 0.125·Sample · Dev = 0.75·Dev + 0.25·|Sample − Est| · Timeout = Est + 4·Dev</td></tr>
+<tr><td>Timeout</td><td>resend oldest unACKed only · restart timer · (textbook) double the interval</td></tr>
+<tr><td>Fast retransmit</td><td>3 duplicate ACKs (4 total) → resend now</td></tr>
+<tr><td>ACK generation</td><td>in-order, none pending: delay ≤ 500 ms · one pending: cumulative now · gap: dup ACK now · fills gap: ACK now</td></tr>
+<tr><td>Flow control</td><td>rwnd = RcvBuffer − (LastByteRcvd − LastByteRead) · LastByteSent − LastByteAcked ≤ rwnd · rwnd = 0 → 1-byte probes</td></tr>
+</tbody></table></div>
+<ul class="notes">
+<li>Traps the in-class questions keep testing:
+  <ul>
+  <li>A stray or duplicate ACK in a "wait for call" state changes nothing; the next packet keeps its number.</li>
+  <li>An ACK names a sequence number, not a copy: either copy of packet 1 confirms packet 1, once.</li>
+  <li>Pipelining fills idle time; it never makes a single packet faster.</li>
+  <li>Reusing a label while its first owner is outstanding is ambiguous even with no errors.</li>
+  <li>A cumulative ACK makes earlier lost ACKs irrelevant; nothing gets resent.</li>
+  <li>Silence doesn't prove loss: data lost, ACK lost and delay all look the same to the sender.</li>
+  <li>Flow control protects the receiver; congestion control protects the network.</li>
+  </ul></li>
+</ul>
+</section>
+
+      </article>
+    </div>
+  </main>
+
+  <script src="assets/common.js?v=20261027b"></script>
+  <script src="assets/demos.js?v=20261027b"></script>
+  <script>
+  (function () {
+    const links = Array.from(document.querySelectorAll('.toc a'));
+    const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+    function mark() {
+      let cur = 0;
+      secs.forEach((s, i) => { if (s && s.getBoundingClientRect().top < 120) cur = i; });
+      links.forEach((a, i) => a.classList.toggle('active', i === cur));
+    }
+    document.addEventListener('scroll', mark, { passive: true });
+    mark();
+
+    /* Collapsible subsections: each top-level bullet with a nested list becomes a toggle. */
+    const toggles = [];
+    document.querySelectorAll('ul.notes > li').forEach((li, n) => {
+      const sub = li.querySelector(':scope > ul');
+      if (!sub) return;
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'notes-toggle';
+      btn.setAttribute('aria-expanded', 'true');
+      sub.id = sub.id || 'sub-' + n;
+      btn.setAttribute('aria-controls', sub.id);
+      while (li.firstChild && li.firstChild !== sub) btn.appendChild(li.firstChild);
+      li.insertBefore(btn, sub);
+      li.classList.add('collapsible');
+      const set = open => { btn.setAttribute('aria-expanded', String(open)); sub.hidden = !open; };
+      btn.addEventListener('click', () => set(btn.getAttribute('aria-expanded') !== 'true'));
+      toggles.push(set);
+    });
+    document.getElementById('collapse-all').addEventListener('click', () => toggles.forEach(f => f(false)));
+    document.getElementById('expand-all').addEventListener('click', () => toggles.forEach(f => f(true)));
+  })();
+  </script>
+</body>
+</html>

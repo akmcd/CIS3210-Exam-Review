@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>In-class questions — CIS*3210 Exam Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css?v=20261027b">
+</head>
+<body data-page="review">
+  <header id="site-header"></header>
+  <main>
+    <div class="page-head">
+      <h1>In-class questions</h1>
+      <p>The prof's in-class quiz questions since the midterm (Quiz 11), in his wording. They're the best guide to how exam questions will be phrased. Answer each one in your head first, then open the worked answer.</p>
+    </div>
+
+    <div class="review-bar">
+      <div><strong id="done-count">0</strong> <span class="muted">questions done</span>
+        <div class="fc-progress" aria-hidden="true"><span id="done-bar"></span></div></div>
+      <div class="btn-row">
+        <a class="btn" href="quiz.html?topic=review&amp;all=1" id="quiz-link">Quiz me on these</a>
+        <a class="btn secondary" href="exam.html">Exam C: in-class focus</a>
+      </div>
+    </div>
+    <p class="muted review-note">Answer choices are as recalled from the quizzes. Where only some choices were recalled, the rest were written for practice; the quiz version lists which after you answer.</p>
+
+    <div class="reading">
+      <nav class="toc" aria-label="Lectures"><ol id="toc"></ol></nav>
+      <article class="article" id="list"></article>
+    </div>
+  </main>
+  <script src="assets/common.js?v=20261027b"></script>
+  <script src="data/review.js?v=20261027b"></script>
+  <script>
+  (function () {
+    const S = window.Study;
+    const R = window.REVIEW_BANK;
+
+    /* Group by date, keeping the file's order (Oct 1 first). */
+    const groups = [];
+    R.forEach(r => {
+      let g = groups.find(x => x.date === r.date);
+      if (!g) { g = { date: r.date, lecture: r.lecture, items: [], note: false }; groups.push(g); }
+      if (r.choiceSource) g.note = true;
+      g.items.push(r);
+    });
+    const slug = d => d.toLowerCase().replace(/\s+/g, '-');
+
+    document.getElementById('toc').innerHTML = groups.map(g =>
+      '<li><a href="#' + slug(g.date) + '">' + S.esc(g.date) + ': ' + S.esc(g.lecture) + '</a></li>').join('');
+
+    document.getElementById('list').innerHTML = groups.map(g =>
+      '<section id="' + slug(g.date) + '"><h2>' + S.esc(g.date) + ': ' + S.esc(g.lecture) + '</h2>' +
+      (g.note ? '<p class="choices-note">Questions and answer choices as recalled from the quiz. In the quiz version, any choices added or finished for practice are listed after you answer.</p>' : '') +
+      g.items.map(r => {
+        const right = S.correctSet(r).map(i => S.md(r.options[i]));
+        return '<div class="ex" data-ex="' + r.id + '">' +
+          '<div class="ex-head"><span class="ex-num">' + S.esc(r.num) + '</span><span class="ex-topic">' + S.md((r.ctx ? r.ctx + ' ' : '') + r.q) + '</span>' +
+          '<label class="ex-done"><input type="checkbox"> Done</label></div>' +
+          '<details><summary>Show worked answer</summary>' +
+          r.worked.map(p => '<p>' + S.md(p) + '</p>').join('') +
+          S.extrasHTML(Object.assign({}, r, { choicesNote: false, choiceSource: null })) +
+          '<div class="ex-key"><strong>' + (S.isMulti(r) ? 'Correct choices in the quiz version:' : 'Correct choice in the quiz version:') + '</strong><ul>' +
+          right.map(t => '<li>' + t + '</li>').join('') + '</ul></div>' +
+          '</details></div>';
+      }).join('') + '</section>').join('');
+
+    document.getElementById('quiz-link').textContent = 'Quiz me on these (' + R.length + ' questions)';
+
+    const exs = Array.from(document.querySelectorAll('.ex'));
+    let done = new Set(S.store.get('reviewDone', []));
+    function update() {
+      exs.forEach(ex => { const on = done.has(ex.dataset.ex); ex.classList.toggle('is-done', on); ex.querySelector('.ex-done input').checked = on; });
+      const n = exs.filter(ex => done.has(ex.dataset.ex)).length;
+      document.getElementById('done-count').textContent = n + ' of ' + exs.length;
+      document.getElementById('done-bar').style.width = (100 * n / exs.length) + '%';
+    }
+    exs.forEach(ex => ex.querySelector('.ex-done input').addEventListener('change', e => {
+      if (e.target.checked) done.add(ex.dataset.ex); else done.delete(ex.dataset.ex);
+      S.store.set('reviewDone', Array.from(done)); update();
+    }));
+    update();
+  })();
+  </script>
+</body>
+</html>
